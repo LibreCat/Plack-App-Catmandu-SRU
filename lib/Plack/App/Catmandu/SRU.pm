@@ -9,7 +9,7 @@ use Catmandu::Exporter::Template;
 use URI;
 use SRU::Request;
 use SRU::Response;
-use Types::Standard qw(Str ArrayRef HashRef);
+use Types::Standard qw(Str ArrayRef HashRef ConsumerOf);
 use Types::Common::String qw(NonEmptyStr);
 use Types::Common::Numeric qw(PositiveInt);
 use Moo;
@@ -86,6 +86,7 @@ has maximum_limit => (
 
 has bag => (
     is => 'lazy',
+    isa => ConsumerOf['Catmandu::CQLSearchable'],
     init_arg => undef,
 );
 
@@ -129,7 +130,7 @@ sub to_app ($self) {
     }
 
     my $index_info = "";
-    if ($bag->can('cql_mapping') and my $indexes = $bag->cql_mapping->{indexes}) {
+    if (my $indexes = $bag->cql_mapping->{indexes}) {
         $index_info .= qq(<indexInfo>\n);
         for my $key (keys %$indexes) {
             my $title = $indexes->{$key}{title} || $key;
@@ -139,7 +140,7 @@ sub to_app ($self) {
     }
 
     my $schema_info = qq(<schemaInfo>\n);
-    for my $schema (@{ $self->record_schemas }) {
+    for my $schema (@{$self->record_schemas}) {
         my $title = $schema->{title} || $schema->{name};
         $schema_info .= qq(<schema name="$schema->{name}" identifier="$schema->{identifier}"><title>$title</title></schema>\n);
     }
@@ -271,7 +272,9 @@ sub not_found ($self) {
 
 1;
 
-=head1 DESCRIPTION
+=head1 NAME
+
+Plack::App::Catmandu::SRU - drop in replacement for Dancer::Plugin::Catmandu::SRU
 
 =head1 SYNOPSIS
 
@@ -299,21 +302,146 @@ sub not_found ($self) {
         )->to_app;
     };
 
-=head1 CONFIGURATION
+=head1 CONSTRUCTOR ARGUMENTS
 
-The configuration contains basic information for the Catmandu::SRU plugin to work:
+=over
 
-    * store - In which Catmandu::Store are the metadata records stored
-    * bag   - In which Catmandu::Bag are the records of this 'store' (use: 'data' as default)
-    * cql_filter -  A CQL query to find all records in the database that should be made available to SRU
-    * default_record_schema - The metadataSchema to present records in
-    * limit - The maximum number of records to be returned in each SRU request
-    * maximum_limit - The maximum number of search results to return
-    * record_schemas - An array of all supported record schemas
-        * identifier - The SRU identifier for the schema (see L<http://www.loc.gov/standards/sru/recordSchemas/>)
-        * name - A short descriptive name for the schema
-        * fix - Optionally an array of fixes to apply to the records before they are transformed into XML
-        * template - The path to a Template Toolkit file to transform your records into this format
-    * template_options - An optional hash of configuration options that will be passed to L<Catmandu::Exporter::Template> or L<Template>
-    * content_type - Set a custom content type header, the default is C<text/xml>.
+=item store
+
+Name of Catmandu store in your catmandu store configuration
+
+Default: C<default>
+
+=item bag
+
+Name of Catmandu bag in your catmandu store configuration
+
+Default: C<data>
+
+This must be a bag that implements L<Catmandu::CQLSearchable>, and that configures a C<cql_mapping>
+
+=item cql_filter
+
+A CQL query to find all records in the database that should be made available to SRU
+
+=item default_record_schema
+
+default metadata schema all records are shown in, when SRU parameter C<recordSchema> is not gi en . Should be one listed in C<record_schemas>
+
+=item limit
+
+The default number of records to be returned in each SRU request, when SRU parameter C<maximumRecords> is not given during a searchRetrieve request.
+
+When not provided in the constructor, it is derived from the default limit of your catmandu bag (see L<Catmandu::Searchable#default_limit>)
+
+=item maximum_limit
+
+The maximum value allowed for request parameter C<maximumRecords>.
+
+When not provided in the constructor, it is derived from the maximum limit of your catmandu bag (see L<Catmandu::Searchable#maximum_limit>)
+
+=item record_schemas
+
+An array of all supported record schemas. Each item in the array is an object with attributes:
+
+* identifier - The SRU identifier for the schema (see L<http://www.loc.gov/standards/sru/recordSchemas/>)
+
+* name - A short descriptive name for the schema
+
+* fix - Optionally an array of fixes to apply to the records before they are transformed into XML
+
+* template - The path to a Template Toolkit file to transform your records into this format
+
+=item template_options
+
+An optional hash of configuration options that will be passed to L<Catmandu::Exporter::Template> or L<Template>
+
+=item content_type
+
+Set a custom content type header, the default is C<text/xml>.
+
+=item title
+
+Title shown in databaseInfo
+
+=item description
+
+Description shown in databaseInfo
+
+=item default_search_params
+
+Extra search parameters added during search in your catmandu bag:
+
+    $bag->search(
+        %{$self->default_search_params},
+        cql_query    => $cql,
+        sru_sortkeys => $request->sortKeys,
+        limit        => $limit,
+        start        => $first - 1,
+    );
+
+Must be a hash reference
+
+Note that search parameter C<cql_query>, C<sru_sortkeys>, C<limit> and C<start> are overwritten
+
+=back
+
+As this is meant as a drop in replacement for L<Dancer::Plugin::Catmandu::SRU> all arguments should be the same.
+
+So all arguments can be taken from your previous dancer plugin configuration, if necessary:
+
+    use Dancer;
+    use Catmandu;
+    use Plack::Builder;
+    use Plack::App::Catmandu::SRU;
+
+    my $dancer_app = sub {
+        Dancer->dance(Dancer::Request->new(env => $_[0]));
+    };
+
+    builder {
+        enable 'ReverseProxy';
+        enable '+Dancer::Middleware::Rebase', base  => Catmandu->config->{uri_base}, strip => 1;
+    
+        mount "/sru" => Plack::App::Catmandu::SRU->new(
+            %{config->{plugins}->{'Catmandu::SRU'}}
+        )->to_app;
+
+        mount "/" => builder {
+            # only create session cookies for dancer application
+            enable "Session";
+            mount '/' => $dancer_app;
+        };
+    };
+
+=head1 METHODS
+
+=over 4
+
+=item to_app
+
+returns Plack application that can be mounted. Path rebasements are taken into account
+
+=back
+
+=head1 AUTHOR
+
+=over 4
+    
+=item Nicolas Franck, C<< <nicolas.franck at ugent.be> >>
+
+=back
+    
+=head1 IMPORTANT
+
+This module is still a work in progress, and needs further testing before using it in a production system
+
+=head1 LICENSE AND COPYRIGHT
+    
+This program is free software; you can redistribute it and/or modify it
+under the terms of either: the GNU General Public License as published
+by the Free Software Foundation; or the Artistic License.
+
+See http://dev.perl.org/licenses/ for more information.
+
 =cut
