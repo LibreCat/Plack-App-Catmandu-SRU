@@ -13,6 +13,7 @@ use Types::Standard qw(Str ArrayRef HashRef ConsumerOf);
 use Types::Common::String qw(NonEmptyStr);
 use Types::Common::Numeric qw(PositiveInt);
 use Moo;
+use Plack::Request;
 use namespace::clean;
 use feature qw(signatures);
 no warnings qw(experimental::signatures);
